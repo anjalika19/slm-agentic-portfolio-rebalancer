@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import math
 import zipfile
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 
 # Kenneth French five-factor model. RF is used to form excess returns and is
@@ -337,7 +340,7 @@ def load_benchmark(path: Optional[str]) -> Optional[pd.DataFrame]:
             return None
 
         col, ticker, field = chosen
-        print(f"[benchmark] using {ticker} {field}")
+        log.info("benchmark: using %s %s", ticker, field)
 
         out = data[["date", col]].rename(columns={col: "benchmark_price"})
 

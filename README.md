@@ -1,322 +1,195 @@
-# Agentic Black-Litterman — multi-agent debate portfolio rebalancer
+# Agentic Black-Litterman
 
-A from-scratch, multi-agent **Black-Litterman (BL)** monthly rebalancing framework
-plus a web UI that makes the agent debate legible: who said what, who influenced
-whom, and how the consensus and final portfolio were reached.
+**A multi-agent LLM debate that produces Black-Litterman views for a monthly portfolio rebalancer, with a web UI that replays the whole debate.**
 
-The **Economist runs first** (macro/sector level) and feeds its regime + sector
-views to the other three specialists (Quant, Fundamental, News-Sentiment). Each
-specialist then emits a **categorical** conviction + agent-specific fields +
-rationale — **no q/P** at this stage. The moderator maps those to baseline BL views
-(this is where q/P/Ω first appear); contested tickers go through an up-to-3-round
-debate; the BL posterior + a constrained long-only MVO produce the weights. The
-whole flow runs once per month-end in a backtest loop.
+Four specialist agents run on a small local model: Economist, Quant, Fundamental and News-Sentiment. They each form a view on every stock, argue over the contested names for up to three structured rounds, and agree on a set of views. Those views go into a from-scratch Black-Litterman posterior and a constrained long-only optimiser. The project's research question: can a debate between *small* language models (Gemma via Ollama) match a single *large* model (Gemini) as a source of portfolio views? It runs a matched 2×2 experiment to find out.
 
-Phase-1 emission shapes (categorical, no q/P — see `schemas.py` / `agents/normalize.py`):
-- **Economist** (sector-level, never single stocks): `risk_regime`, `rate_environment`,
-  `regime_rationale`, `sector_views{sector:{stance}}`, `favored_sectors`, `risk_sectors`.
-- **Quant**: `stock_signals{ticker:{signal(5-way), primary_factors, factor_alignment,
-  alpha_contribution, rationale, cited_values}}` + `portfolio_level_view`.
-- **Fundamental**: `{signal(5-way), valuation_call, quality_tier, key_drivers, rationale, cited_values}`.
-- **Sentiment**: `{signal(5-way), primary_catalyst, event_driven, rationale, cited_values}` —
-  input includes AlphaVantage NEWS_SENTIMENT headlines + yfinance analyst block
-  (live) or realistic synthetic equivalents (fixture). `event_driven` separates hard
-  catalysts from opinion drift (opinion-only views are confidence-capped).
-
-The 5-way signal is `strongly_long | long | neutral | underweight | avoid`. A
-normalizer maps it to the numeric tilt the BL math needs and derives confidence from
-the agent-specific flags, keeping the raw emission for the UI.
-
-### Three distinct debate rounds + context-agent tiebreak (spec A3)
-
-Each round is a *different* information operation (not "do you still agree?" ×3 — that's
-the martingale): **R1 information transfer** (which peer facts are new to me?), **R2 forward
-positioning + grounded named (dis)agreement**, **R3 disagreement classification + tiebreak**.
-At R3 a remaining conflict is classed **factual** / **horizon-weighting** / **irreducible**;
-a type-(b) weighting conflict is settled by a **context agent** — the Economist's regime or
-the Sentiment catalyst — under a **conjunction rule** (regime tilts only with the aligned
-stock-specific fact) and a **conflict-of-interest** guard (a context agent that is itself a
-disputant can't adjudicate). The tiebreak shifts q only. A grounded minority survives:
-high-conviction agents resist the majority pull (anti-conformity), so genuine conflicts reach
-R3 instead of being smoothed away. (`pipeline/phases.py::classify_and_tiebreak`, tested in
-`tests/test_tiebreak.py`.)
-
-### Ablations (spec B4) — `ablations.py`
-
-Decomposition controls, all scored by the same forward-accuracy harness:
-`full_debate` vs `phase1_only` (does debate add anything?), `single_gemma_all_data`
-(specialization vs deliberation), and `sham_debate` (negative control: each agent is fed a
-*different* ticker's peer facts — real debate must beat this).
-```bash
-STRICT_MODEL=0 python ablations.py --start 2024-01-31 --end 2024-09-30
-```
-
-### Debate evaluation harness (does the debate add information?)
-
-Outcome Sharpe can't tell you whether the *debate* did anything (a good Sharpe can
-come from Phase-1 alone), so `evaluate.py` scores the **views** directly against the
-realized next-month return (point-in-time; agents never see it):
-
-- **B1** forward view accuracy, Phase-1 (pre) vs post-debate (post): hit-rate + Brier.
-- **B2** correction (wrong→right) vs subversion (right→wrong) + sycophancy rate.
-- **B3** per-round hit-rate → a martingale verdict (flat ⇒ cut later rounds).
-
-```bash
-STRICT_MODEL=0 python evaluate.py --as-of 2024-06-30      # one month (noisy)
-STRICT_MODEL=0 python backtest.py --start ... --end ...   # aggregate B1-B3 across months
-```
-The backtest prints and persists `debate_evaluation`. Anti-conformity is enforced
-upstream: a direction flip needs a new cited fact or it's reverted as sycophancy
-(`pipeline/phases.py::_guard_sycophancy`); the moderator is **thin** (code
-confidence-weighted aggregation, authors no q of its own).
-
-### Black-Litterman views (absolute + pairwise; basket rows banned)
-
-Only stocks that reach a **directional consensus** in the debate get a view row;
-neutral/unresolved stocks are absent from `P` and stay at the prior. Two shapes only:
-- **ABSOLUTE** `+1` on the stock, `Q` = expected return level, **wider Ω** (×3) so a
-  standalone conviction informs but can't dominate the prior;
-- **PAIRWISE** `+1`/`−1` (single names; this universe is one stock per sector, so the
-  economist's "Energy > Consumer Staples" is exactly `+1 XOM, −1 PEP`).
-
-"X beats the whole basket" rows are **banned** (`bl_core.validate_view_rows`) — they'd
-make every name outperform every other, an inconsistent `Q`. After the posterior, a
-**VaR₉₅/CVaR₉₅** risk readout (`bl_core.parametric_var_cvar`, spec D5) is reported (it
-does not change the weights). The view-precision condition number is logged (D6).
-
-### Black-Litterman views (legacy note)
-
-The single-stock specialists produce **absolute** views (unit P-row `[0..1..0]`, Q =
-the asset's expected return). The Economist's favored-vs-avoided sectors become
-**relative** (zero-sum) views: P-row `+1/k` on the favored basket, `-1/m` on the
-avoided basket, Q = the spread. Both stack into the **same** posterior, which is the
-canonical form (Ω is inverted):
-
-```
-E[R] = [(τΣ)^-1 + PᵀΩ^-1 P]^-1 [(τΣ)^-1 Π + PᵀΩ^-1 Q],   Π = δΣw,   τ=0.05, δ=2.5
-```
-
-(See `bl_core.py::p_row_relative` and `bl_posterior`. The UI's Outcome tab shows the
-full P/Q/Ω matrices, labelling each view absolute or relative.)
-
-### Hardening from live runs (each with a test in `tests/test_live_fixes.py`)
-
-- **Full-universe coverage**: every agent must return a signal for every ticker; a
-  missing one triggers one re-prompt, then an explicit `abstain` + a warning event.
-- **Feasible weight cap**: `MAX_WEIGHT` defaults to 0.30 (≥ 1/N for the 6-stock book);
-  an infeasible configured cap is raised to `max(cfg, 1.5/N)` and reported via a
-  visible event + the UI — never silently relaxed.
-- **Label↔q consistency**: a view's direction is derived from q against `NEUTRAL_BAND`
-  (|q|<band ⇒ neutral and q forced to 0), so the label can't disagree with q.
-- **Self-reference guard** on every peer field (strongest_counterargument, responded_to,
-  influenced_by, each reply's responding_to).
-- **Influence consistency**: the moderator's `who_swayed` is derived from the same
-  `influenced_by` ledger the matrix uses.
-
-### Roundtable transcript
-
-The rebuttal step gives each agent the 1-2 most-disagreeing peers and requires direct,
-by-name replies (`replies: [{responding_to, stance, quoted_claim, message}]`). Each
-reply — plus the moderator's baseline and synthesis — is emitted as an ordered
-`agent_message` event, so the UI's Debate tab renders a **chronological council
-transcript** per ticker (moderator opens → agents state positions → they answer each
-other by name with agree/disagree/partial tint → moderator synthesis → vote tally).
-The play/scrubber steps message-by-message. The four stance cards + influence matrix
-remain as a secondary collapsible panel.
-
-### Matched 2x2 model--architecture evaluation
-
-The same inference and portfolio code now supports all four experimental cells:
-
-| | Single agent | Multi agent |
-|---|---|---|
-| **Gemma / SLM** | `gemma_single` | `gemma_debate` |
-| **Gemini / LLM** | `gemini_c1` | `gemini_debate` |
-
-`factorial` runs all four configurations on the exact same point-in-time input
-bundle for every month. The saved summary includes `factorial_effects`, which
-reports the single- and multi-agent scale gaps, each model's architecture gain,
-the interaction effect, and absolute/relative gap closure for gross and net
-portfolio metrics. `compare` remains available for the legacy Gemma-multi versus
-Gemini-single headline comparison.
+![Debate view: four specialists and a moderator around the council table, mid-rebuttal](docs/images/debate.png)
 
 ---
 
-## What's correct here (the fixes that were the point)
+## How it works
 
-These are the things the old Colab notebook got wrong; they are the reason this is
-a clean rebuild, not a port of its debate/vote logic.
+```mermaid
+flowchart LR
+    D[(Point-in-time<br/>data bundle)] --> E[Economist<br/>macro regime + sector views]
+    E --> Q[Quant<br/>FF5 factor model]
+    E --> F[Fundamental<br/>valuation + quality]
+    E --> S[Sentiment<br/>news + analysts]
+    Q & F & S & E --> M{Contested<br/>tickers?}
+    M -- yes --> R[3-round debate<br/>R1 info transfer · R2 forward view · R3 classify + tiebreak]
+    M -- no --> V
+    R --> V[Consensus stock views]
+    V --> BL[Black-Litterman posterior<br/>pairwise P / Q / Ω]
+    BL --> O[Long-only MVO<br/>cvxpy, weight + active caps]
+    O --> W[Monthly weights]
+```
 
-| Spec | Fix | Where | Test |
-|------|-----|-------|------|
-| **3a** | The vote consumes each agent's **revised post-debate position** (`revised_positions[round][ticker][agent]`), only falling back to the Phase-1 signal in round 0. | `pipeline/phases.py::_vote_on_view` | `test_debate.py::test_vote_uses_revised_positions_not_phase1` |
-| **3b** | Ω is tied to the prior the **Idzorek** way: `Ω_ii = (1/c − 1)·(Pᵢ·τΣ·Pᵢᵀ)`, floored — not `(1−c)²` on an arbitrary scale. | `bl_core.py::idzorek_omega` | `test_bl_core.py::test_high_confidence_view_shifts_weight` |
-| **3c** | Real constrained QP (cvxpy): maximise `μᵀw − (δ/2)wᵀΣw` with min/max, active-weight, and sector controls. Absolute volatility is logged; `VOL_CAP` is optional and disabled by default. | `bl_core.py::optimize_long_only` | `tests/test_research_fixes.py` |
-| **3d** | Covariance is verified symmetric + PSD (ridge only as last resort), **never** silently identity; condition number logged every run. | `bl_core.py::build_covariance` / `covariance_from_block` | `test_bl_core.py::test_covariance_*` |
-| **3e** | Unresolved tickers after MAX rounds are forced to neutral with a logged `consensus_failure` event. | `pipeline/phases.py::force_consensus_failures` | `test_debate.py::test_consensus_failure_forced_and_logged` |
-| **3f** | No silent mocking: `STRICT_MODEL=True` raises; `False` records `used_mock=true` + emits a warning. | `agents/llm.py::structured_call` | `test_llm.py` |
-| **3g** | An agent's strongest-counterargument-agent may not be itself (re-prompt once, then drop). | `pipeline/phases.py::_guard_self_counterargument` | `test_debate.py::test_self_counterargument_guard` |
-| **§4** | Validator traces every `cited_values` number back to the agent's input package within 5% → per-agent hallucination rate. | `pipeline/validator.py` | surfaced in UI |
-| **PiT** | Forward prices never reach the agent packages. | providers | `test_pit.py` |
+1. **Phase 1, independent views.** The Economist runs first and passes its regime and sector stance to the other three. Each specialist gives every ticker a *categorical* signal (`strongly_long … avoid`) with a rationale and the numbers it cited. No agent writes BL math directly.
+2. **Debate.** Tickers where the agents disagree go through up to three rounds. Each round does a different job, so later rounds aren't just "do you still agree?":
+   - R1: share facts the others don't have.
+   - R2: take a forward-looking position, naming who you agree or disagree with.
+   - R3: classify the remaining disagreement and break the tie with a context agent.
+
+   Guards keep the debate honest:
+   - **Sycophancy guard.** Changing direction requires citing a new fact.
+   - **Self-reference guard.** An agent can't name itself as its strongest counterargument.
+   - **Thin moderator.** The moderator aggregates the agents' positions but contributes no view of its own.
+3. **Validation.** Every number an agent cites is traced back to its input package (within 5%), giving a per-agent hallucination rate.
+4. **Portfolio.**
+   - Consensus stock views are calibrated into expected-return spreads and written as *pairwise* BL view rows.
+   - Ω is set with the Idzorek method.
+   - The posterior feeds a constrained mean-variance optimiser with per-name, active-weight and sector limits.
+   - Covariance is checked to be symmetric and positive semi-definite, and is never silently replaced with the identity matrix.
+5. **Backtest.** All of the above runs at every month-end. Results include transaction costs and are compared with equal-weight, max-Sharpe MVO and risk-parity baselines.
+
+The design, with each spec item and where it lives in the code, is in [docs/DESIGN.md](docs/DESIGN.md).
 
 ---
 
-## Install
+## Quick start (offline, about 2 minutes)
 
-Requires Python 3.11+ (developed on 3.12). A venv is included at `.venv`; to rebuild:
+The demo needs **no model, API key or data download**:
+- A synthetic market supplies point-in-time data.
+- When no model is reachable, the agents fall back to deterministic mocks built from their real input numbers.
+- Every mocked call is flagged `used_mock=true` in the run log and in the UI.
 
 ```bash
-cd agentic_bl
+git clone https://github.com/anjalika19/slm-agentic-portfolio-rebalancer.git
+cd slm-agentic-portfolio-rebalancer
+make install      # Python 3.11–3.13 venv in .venv + editable install
+make demo         # http://localhost:8000
+```
+
+The UI opens with two bundled example runs from `examples/`:
+- **Load run** opens a single-date debate.
+- The **Backtest** tab has a 6-month backtest.
+- **▶ Live rebalance/backtest** runs a fresh one and streams it live.
+
+Without `make`:
+
+```bash
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -U pip
-pip install -r requirements.txt
+pip install --prefer-binary -e ".[ollama]"
+STRICT_MODEL=0 uvicorn agentic_bl.server.app:app --port 8000
 ```
 
-### Ollama + Gemma (for real runs)
+From the command line:
 
 ```bash
-brew install ollama            # or https://ollama.com/download
-ollama serve                   # leave running
-ollama pull gemma3             # latest Gemma (no public "gemma4" tag exists)
-ollama list                    # confirm the exact tag
-export GEMMA_MODEL=gemma4:latest   # or your tag
+STRICT_MODEL=0 agentic-bl-run                                            # one rebalance, prints weights
+STRICT_MODEL=0 agentic-bl-backtest --start 2024-01-31 --end 2024-06-30   # backtest + debate evaluation
 ```
 
-The fixture demo runs **without** Ollama (mock fallback); real runs need it.
+| Outcome tab: BL views, P/Q/Ω, weights vs 1/N | Backtest tab: equity curve vs baselines |
+|---|---|
+| ![Outcome](docs/images/outcome.png) | ![Backtest](docs/images/backtest.png) |
 
 ---
 
-## Run it
+## Running with real models
 
-All commands from `agentic_bl/` with the venv active.
+Settings are read from environment variables or a local `.env` file (copy `.env.example`).
+
+**Gemma via Ollama (the small-model path):**
 
 ```bash
-# 1) single-date fixture debate (mock-friendly, no Ollama needed)
-STRICT_MODEL=0 python run_single.py
+ollama serve &               # or: python scripts/ollama_load.py
+ollama pull gemma3
+STRICT_MODEL=1 GEMMA_MODEL=gemma3:latest agentic-bl-run
+```
 
-# 1b) single-date with the real model (requires Ollama + Gemma)
-STRICT_MODEL=1 GEMMA_MODEL=gemma3:latest python run_single.py
+**Gemini (the large-model control):**
 
-# 2) short fixture backtest (monthly loop, 9 months) + baselines
-STRICT_MODEL=0 python backtest.py --start 2024-01-31 --end 2024-09-30
-
-# 2b) complete 2x2 evaluation on identical monthly input bundles
-STRICT_MODEL=0 python backtest.py --mode factorial --start 2024-01-31 --end 2024-09-30
-
-# Individual missing controls
-STRICT_MODEL=0 python backtest.py --mode gemma_single --start 2024-01-31 --end 2024-09-30
-STRICT_MODEL=0 python backtest.py --mode gemini_debate --start 2024-01-31 --end 2024-09-30
-
-# Real Gemini runs require a key;
+```bash
+pip install -e ".[gemini]"
 export GEMINI_API_KEY=...
-
-# 3) the UI (replay recorded runs + live streaming)
-uvicorn server.app:app --port 8000
-#   open http://localhost:8000
-
-# 4) run tests
-python -m pytest -q
+STRICT_MODEL=1 agentic-bl-backtest --mode gemini_c1 --start 2024-01-31 --end 2024-12-31
 ```
 
-### Switching to the LiveProvider
+With `STRICT_MODEL=1`, a failed model call raises an error instead of falling back to a mock.
+
+### Live market data
+
+`--provider live` swaps the synthetic market for real point-in-time inputs:
+
+| Source | Feeds | Notes |
+|---|---|---|
+| Bundled price CSVs and Kenneth French FF5 daily factors (`live_data/quant/data/`) | Quant | No key needed |
+| FRED | Economist (macro) | Needs `FRED_API_KEY` |
+| Bloomberg fundamentals export (`live_data/fundamental/data/Book1.xlsx`) | Fundamental | Bundled file |
+| AlphaVantage → Finnhub → yfinance news | Sentiment | Needs `ALPHAVANTAGE_API_KEY` / `FINNHUB_API_KEY` |
 
 ```bash
-# quant leg runs on the bundled real Bloomberg-exported CSVs (no keys needed);
-# economist needs a FRED key; fundamental/sentiment need Bloomberg/news access.
-export FRED_API_KEY=...                 # for the macro leg
-python run_single.py --provider live --portfolio-id live6
-# to fill fundamental/sentiment from the fixture (clearly flagged, NOT real data):
-LIVE_ALLOW_FIXTURE_FALLBACK=1 python run_single.py --provider live
+pip install -e ".[live]"
+agentic-bl-run --provider live --portfolio-id live6
 ```
-Without keys/sources the LiveProvider **fails loudly** — it never silently mocks.
+
+Missing keys or files make the live provider **fail loudly**; it never mocks silently. `LIVE_ALLOW_FIXTURE_FALLBACK=1` fills the gaps from the fixture instead, and flags it.
 
 ---
 
-## The UI (the central deliverable)
+## Evaluation design
 
-`http://localhost:8000` — color-coded per agent everywhere
-(quant=blue, fundamental=green, sentiment=amber, economist=purple).
+**Matched 2×2: model size × architecture.** All four cells see the identical input bundle every month:
 
-* **Debate tab** — pick a ticker; rounds 1→3 unfold with the four agents side by
-  side (direction/q/confidence), evidence, concessions, still-objects and who
-  influenced whom; the moderator synthesis; the vote tally (accept/adjust/reject
-  with each vote's position source) and whether consensus was reached. Plus an
-  **influence matrix** (who swayed whom) and a **convergence strip** (q by round).
-* **Outcome tab** — final BL views (P/Q/Ω/direction) with π (equilibrium) next to
-  μ_BL (posterior), final weights vs the 1/N equilibrium prior, and the validator
-  table (per-agent hallucination rate, `used_mock` flags).
-* **Backtest tab** — equity curve vs the three baselines, weight-evolution stacked
-  area, and a per-month turnover / consensus-failure strip + a performance table
-  (cum/ann return, Sharpe, Sortino, MaxDD, Calmar, turnover).
-* **Replay & live** — every run is persisted to `runs/<id>_<date>_<ts>.json`; load
-  any saved run and scrub/step/play through it without invoking a model. The
-  "▶ Live run" button streams a fresh run over a WebSocket.
+| | Single agent | Multi-agent debate |
+|---|---|---|
+| **Gemma (small model)** | `gemma_single` | `gemma_debate` |
+| **Gemini (large model)** | `gemini_c1` | `gemini_debate` |
 
-**Council view (primary).** The Debate tab is a council canvas: the four specialists +
-moderator are characters around a table; the current speaker's avatar lights up with a
-one-line speech bubble (direction glyph ▲▼●, one evidence chip), an arrow from the peer
-being answered tinted green/red/amber (agree/disagree/partial), a per-round header stating
-that round's job, and a **gold glow** when a context agent breaks a tie. The play/scrubber
-steps one speech bubble at a time and the council follows whoever is speaking. A convergence
-ribbon per ticker shows the direction trajectory (e.g. ▼→●→▲ → resolved). The full
-transcript, stance cards and influence matrix are collapsible secondary panels.
+`agentic-bl-backtest --mode factorial` runs all four. It reports four things:
+- the scale gap at each architecture;
+- the gain from debate for each model;
+- the interaction effect;
+- how much of the small-vs-large gap the debate closes, on both gross and net-of-cost metrics.
 
-Build the UI against replay first; it works with zero models running.
+**Does the debate add information?** Portfolio Sharpe can't answer that, because a good Sharpe may come from Phase 1 alone. So every backtest also scores the *views* themselves against the realised next-month return:
+
+- **B1. Forward accuracy before and after debate.** Hit rate and Brier score.
+- **B2. Corrections vs subversions.** How often the debate turns a wrong view right versus a right view wrong, plus the sycophancy rate.
+- **B3. Hit rate by round.** If later rounds don't improve it, the debate behaves like a martingale and those rounds can be cut.
+
+**Ablations** (`scripts/research/ablations.py`) cover:
+- debate vs Phase 1 only;
+- one model given all four data packages (specialisation vs deliberation);
+- a *sham debate*, where each agent gets another ticker's peer facts, as a negative control.
 
 ---
 
-## Layout
+## Project layout
 
 ```
-agentic_bl/
-  config.py            # all constants (GEMMA_MODEL, scales, caps, STRICT_MODEL, universe...)
-  events.py            # event schema + emitter + JSON run-log writer
-  schemas.py           # pydantic: specialist output, debate statements, BL views
-  bl_core.py           # Omega (3b), BL posterior, cvxpy optimizer (3c), covariance (3d)
-  factor_model.py      # FF5 rolling-60m excess-return OLS + HAC factor state
-  baselines.py         # 1/N, MVO max-Sharpe, Risk Parity
-  metrics.py           # Sharpe/Sortino/MaxDD/Calmar/turnover
-  backtest.py          # monthly rebalancing driver + reporting
-  agents/
-    prompts/           # specialist + debate prompts (ported verbatim; see PORTING NOTEs)
-    llm.py             # Ollama/Gemma client, schema enforcement, strict/mock indirection
-    mock.py            # deterministic mocks (read real package numbers)
-  pipeline/
-    phases.py          # phase 1-4 logic (the correctness fixes live here)
-    graph.py           # LangGraph orchestrator (debate loop via conditional edge)
-    validator.py       # value-tracing validator (§4)
-    state.py runner.py
-  providers/
-    base.py            # DataProvider interface + InputBundle
-    fixture.py         # deterministic PSD-cov packages (default, runs anywhere)
-    live.py            # real data: quant CSVs + Bloomberg Book1.xlsx fundamentals + FRED + AlphaVantage; fails loudly w/o keys/files
-    quant_block.py     # shared quant-package builder (matches 05_input_json_assembler.py)
-    synthetic_market.py# self-consistent synthetic market behind the fixture
-  server/app.py        # FastAPI: replay endpoints + WebSocket live stream
-  ui/                  # index.html + app.js (vanilla, no build step)
-  runs/                # saved run JSON logs (one per rebalance date) + backtests
-  tests/               # bl_core, factor_model, debate(3a/3e/3g), pit, llm
+src/agentic_bl/
+  config.py              every tunable constant, env-overridable
+  bl_core.py             covariance, Idzorek Ω, BL posterior, cvxpy optimiser, VaR/CVaR
+  calibration.py         stock views → calibrated q → pairwise BL rows
+  factor_model.py        rolling 60-month FF5 regressions with HAC errors
+  backtest.py            monthly loop, baselines, 2×2 factorial, reporting
+  evaluate.py            B1–B3 debate evaluation
+  agents/                prompts, Ollama/Gemini client with schema enforcement, mocks
+  pipeline/              LangGraph orchestration: phases, debate, validator
+  providers/             fixture (synthetic) and live data providers
+  server/app.py          FastAPI: replay endpoints + live run streaming
+  arize.py               Phoenix/OpenTelemetry tracing setup (see Future work)
+ui/                      single-page viewer (vanilla JS, no build step)
+examples/                bundled sample runs shown in the UI
+live_data/               live-mode loaders and data files
+scripts/research/        ablations, calibration fitting, batch runs, replay analyses
+scripts/make_examples.py regenerate examples/
+docs/DESIGN.md           detailed design notes
 ```
 
-## Quant factor model
+---
 
-The Quant specialist uses the Kenneth French daily five-factor data set. The live
-loader accepts the original ZIP or a normalized CSV with
-`date,mkt_rf,smb,hml,rmw,cma,rf`. Regressions use monthly stock return minus RF as
-the dependent variable and Mkt-RF, SMB, HML, RMW, and CMA as regressors. Mkt-RF is
-reported as systematic risk; only SMB/HML/RMW/CMA contribute to style-factor
-support. The Quant prompt explicitly treats recent factor interactions as regime
-evidence rather than guaranteed next-month continuation.
+## Limitations
 
-## Notable config knobs (env-overridable)
+- **The demo is not evidence.** The offline demo runs mock agents on a synthetic market, so it shows the machinery but its returns mean nothing. Real conclusions need Gemma/Gemini runs on live data.
+- **Small universe.** The default book has six stocks, one per sector. That keeps debates readable but makes the portfolio statistics noisy.
+- **Short history for LLM runs.** Backtests with real models cost a model call per agent, per round, per ticker, per month, so the evaluation window is short.
 
-`GEMMA_MODEL, STRICT_MODEL, ANNUAL_RETURN_SCALE, BL_TAU, RISK_AVERSION, MAX_WEIGHT,
-SECTOR_CAP, VOL_CAP=None, VIEW_SPREAD_FLOOR, CONSENSUS_ACCEPT_THRESHOLD=3, MAX_DEBATE_ROUNDS=3,
-HALLUCINATION_TOL=0.05, FACTOR_LOOKBACK_MONTHS=60, FACTOR_MIN_OBS=36,
-FACTOR_SIGNAL_P_MAX=0.10, FACTOR_HAC_LAGS=3, FACTOR_DATA_PATH, COV_WINDOW_DAYS=63, TXN_COST_BPS=10, BENCHMARK=SPXT, START_DATE, END_DATE, UNIVERSE`.
+## Future work
 
-> **Note on `MAX_WEIGHT` with 6 names:** the spec's 15% per-name cap is infeasible
-> for a 6-stock book (6×0.15 < 1) and 1/6 would force exact equal weight. The
-> optimizer detects this and relaxes the per-name cap to a feasible level that
-> still binds (`2/n`), logging the relaxation in the optimizer note. With a larger
-> universe the 15% cap applies unchanged.
+- **Arize Phoenix observability.** `agentic_bl/arize.py` already sets up Phoenix and OpenTelemetry (`pip install -e ".[tracing]"`, `PHOENIX_*` settings in `config.py`). The next step is to wire it into `agents/llm.py::structured_call` and the debate phases, so every agent call, debate round and tiebreak becomes a traced span. That would show prompt and response pairs, latency, token use and schema-repair retries alongside the replay UI.
+- A larger, multi-name-per-sector universe, with sector-level pairwise views.
+- Longer real-model backtests, run as a batch with `scripts/research/run_portfolio_batch.py`.

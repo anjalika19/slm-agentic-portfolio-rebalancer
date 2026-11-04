@@ -1,8 +1,30 @@
-/.venv/*
-batch_logs/
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Local config and secrets
+.env
+
+# Generated output (sample runs live in examples/)
 runs/
+batch_logs/
+.cache/
+
+# Node
+node_modules/
+
+# OS / editor
+.DS_Store
+
+# Local-only notes and tests
 tests/
 COLAB.md
 FF5_MIGRATION.md
 FIXED_SCALING_REPLAY.md
-.cache/*
+
+# Local tool config
+.claude/
