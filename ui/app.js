@@ -324,8 +324,10 @@ function renderCouncil(){
       <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="${col}"/></marker></defs>
       <line x1="${f[0]}%" y1="${f[1]}%" x2="${s[0]}%" y2="${s[1]}%" stroke="${col}" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#ah)" opacity="0.85"/></svg>`;
   }
-  // seats
-  for(const ag of Object.keys(SEATS)){
+  // seats: the debate roles, plus a single-model seat only when that model is in this run
+  const present=new Set((m.tickers[t].transcript||[]).map(x=>x.agent));
+  const seats=Object.keys(SEATS).filter(ag=>!SINGLE_MODEL_AGENTS.includes(ag)||present.has(ag));
+  for(const ag of seats){
     const p=SEATS[ag], speaking=cur&&cur.agent===ag, glow=cur&&cur.kind==="tiebreak"&&cur.agent===ag;
     html+=`<div class="seat ${speaking?'speaking':''} ${glow?'glow':''}" style="left:${p[0]}%;top:${p[1]}%">
       <div class="avatar" style="border-color:${COLOR[ag]};color:${COLOR[ag]}">${ICON[ag]}</div>

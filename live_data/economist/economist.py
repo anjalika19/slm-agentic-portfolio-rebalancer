@@ -87,23 +87,25 @@ from fredapi import Fred
 import ssl
 import urllib.request
 
-# Fix for macOS Python 3.7 SSL certificate verification failure
-ssl_ctx = ssl.create_default_context()
-ssl_ctx.check_hostname = False
-ssl_ctx.verify_mode = ssl.CERT_NONE
+# fredapi uses urllib. Some macOS Python builds ship without a CA bundle, so point
+# urllib at certifi's bundle when it's available. Certificate verification stays on.
+try:
+    import certifi
 
-https_handler = urllib.request.HTTPSHandler(context=ssl_ctx)
-opener = urllib.request.build_opener(https_handler)
-urllib.request.install_opener(opener)
+    urllib.request.install_opener(
+        urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where()))
+        )
+    )
+except ImportError:  # pragma: no cover - fall back to the system CA store
+    pass
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 
-# Read the key from the environment. Do NOT commit a real key to source.
-# (Rotate the key that was previously hardcoded here.)
-FRED_API_KEY  = os.getenv("FRED_API_KEY", "f098572e18a010ed70515f6ef6350f5a")
+# Read the key from the environment; never commit a real key to source.
+FRED_API_KEY  = os.getenv("FRED_API_KEY", "")
 TRAIN_START   = "2013-01-31"   # SFT training window start
 TRAIN_END     = "2024-12-31"   # SFT training window end
 OUT_FILE      = Path(os.getenv("ECON_OUT_FILE", "economist_sft_corpus.jsonl"))
@@ -656,7 +658,7 @@ def build_example(date: pd.Timestamp, row: pd.Series,
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 
 def main():
-    if FRED_API_KEY == "YOUR_FRED_API_KEY_HERE":
+    if not FRED_API_KEY:
         raise ValueError(
             "Set your FRED API key: export FRED_API_KEY=your_key_here\n"
             "Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html"
@@ -726,4 +728,5 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()

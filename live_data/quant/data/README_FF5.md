@@ -1,11 +1,12 @@
 # Kenneth French five-factor data
 
-The live Quant provider defaults to:
+The live Quant provider defaults to the bundled daily file in this directory:
 
-`F-F_Research_Data_5_Factors_2x3_daily_CSV.zip`
+`F-F_Research_Data_5_Factors_2x3_daily.csv`
 
-The loader accepts the original Kenneth French daily ZIP directly and converts
-percentage values to decimals. It also accepts a normalized CSV with columns:
+The loader also accepts the original Kenneth French daily ZIP
+(`F-F_Research_Data_5_Factors_2x3_daily_CSV.zip`) directly and converts
+percentage values to decimals, or a normalized CSV with columns:
 
 `date,mkt_rf,smb,hml,rmw,cma,rf`
 
