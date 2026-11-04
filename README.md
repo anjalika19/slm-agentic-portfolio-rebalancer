@@ -4,7 +4,7 @@
 
 Four specialist agents run on a small local model: Economist, Quant, Fundamental and News-Sentiment. They each form a view on every stock, argue over the contested names for up to three structured rounds, and agree on a set of views. Those views go into a from-scratch Black-Litterman posterior and a constrained long-only optimiser. The project's research question: can a debate between *small* language models (Gemma via Ollama) match a single *large* model (Gemini) as a source of portfolio views? It runs a matched 2×2 experiment to find out.
 
-![Debate view: four specialists and a moderator around the council table, mid-rebuttal](docs/images/debate.png)
+![The debate floor: each agent at their own desk; the Economist is disagreeing with Fundamental, whose desk is ringed as the one being answered](docs/images/debate.png)
 
 ---
 

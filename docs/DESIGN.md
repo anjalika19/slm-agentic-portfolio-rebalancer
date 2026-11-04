@@ -78,7 +78,11 @@ These are the reasons this is a clean rebuild of the original notebook rather th
 
 The viewer is `ui/`, served by `server/app.py`. Each agent has a consistent colour: quant blue, fundamental green, sentiment amber, economist purple.
 
-- **Debate.** A council canvas: the current speaker lights up with a one-line speech bubble and an evidence chip, and an arrow from the peer being answered is tinted by stance. A gold glow marks a context-agent tiebreak. The play/scrub control steps one message at a time. Below the canvas are the full transcript, the stance cards and the influence matrix.
+- **Debate.** An office scene, the "debate floor":
+  - Each specialist has an illustrated avatar at their own desk, with a monitor matching their speciality, and the moderator stands at a whiteboard showing the ticker and round.
+  - The current speaker glows and gets a speech bubble with an evidence chip. The agent being answered gets a dashed ring in the reply's stance colour, and a context-agent tiebreak glows gold.
+  - Each desk's nameplate has a meter that tracks that agent's latest q as the debate moves.
+  - Round chips and a per-message dot timeline jump anywhere in the debate. The right column shows the latest vote and the full chronological transcript, and the stance cards and influence matrix are in a collapsible panel.
 - **Agent inputs.** The exact package each agent saw.
 - **Outcome & Portfolio.**
   - Final views alongside π (equilibrium) and μ_BL (posterior).
