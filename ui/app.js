@@ -276,6 +276,7 @@ function renderDebate(){
     tl.appendChild(row);
   }
   renderCouncil();
+  renderVoteCard();
   renderConvStrip();
   renderTranscript();
   renderAgentCards();
@@ -283,19 +284,54 @@ function renderDebate(){
   renderInputs();
 }
 
-// ---------------------------------------------------------------- council canvas
-const ICON={quant:"📊",fundamental:"📒",sentiment:"📰",economist:"🏛️",moderator:"⚖️",single_gemma:"◆",single_gemini:"✨"};
-const SEATS={quant:[22,28],fundamental:[78,28],sentiment:[22,82],economist:[78,82],moderator:[50,12],single_gemma:[50,50],single_gemini:[50,50]};
+// ---------------------------------------------------------------- debate floor (office scene)
+const ICON={quant:"●",fundamental:"●",sentiment:"●",economist:"●",moderator:"●",single_gemma:"◆",single_gemini:"◆"};
 const ROUND_JOBS={0:"Baseline view",1:"R1 · Sharing what each only knows",2:"R2 · What happens next month?",3:"R3 · Settling the disagreement"};
+const ROUND_SHORT={1:"Info transfer",2:"Forward view",3:"Tiebreak"};
+const AGENT_META={
+  quant:{name:"Quant",role:"Factor models"},
+  fundamental:{name:"Fundamental",role:"Valuation & quality"},
+  sentiment:{name:"Sentiment",role:"News & analysts"},
+  economist:{name:"Economist",role:"Macro regime"},
+  moderator:{name:"Moderator",role:"Runs the vote"},
+  single_gemma:{name:"Gemma single",role:"One model, all data"},
+  single_gemini:{name:"Gemini single",role:"One model, all data"},
+};
+// x, y = centre of the station as % of the scene; w = station width %; bubble = where its speech bubble sits
+const STATIONS={
+  quant:{x:21,y:47,w:17,bubble:"left:86%;top:-14%"},
+  fundamental:{x:79,y:47,w:17,bubble:"right:86%;top:-14%"},
+  sentiment:{x:29,y:79,w:20,bubble:"left:34%;bottom:100%;margin-bottom:6px"},
+  economist:{x:71,y:79,w:20,bubble:"right:34%;bottom:100%;margin-bottom:6px"},
+  moderator:{x:50,y:41,w:14,bubble:"left:50%;top:100%;margin-top:8px;transform:translateX(-50%);width:250px",standing:true},
+  single:{x:50,y:76,w:22,bubble:"left:60%;bottom:100%;margin-bottom:6px"},
+};
+const STANCE_COLOR={agree:"var(--long)",disagree:"var(--short)",partial:"var(--partial)"};
+
+const AVATAR={
+  quant:`<path d="M16 120c0-24 19-38 44-38s44 14 44 38z" fill="#3B6FD8"/><path d="M47 84c5 7 21 7 26 0" fill="none" stroke="#2A55AE" stroke-width="5" stroke-linecap="round"/><rect x="52" y="66" width="16" height="18" rx="6" fill="#E3B48E"/><circle cx="60" cy="52" r="22" fill="#F1C7A5"/><path d="M37 50c-2-16 10-26 24-26 14 0 25 8 23 22-6-8-18-12-30-10-6 1-12 6-17 14z" fill="#2B2B3A"/><circle cx="51" cy="55" r="6.5" fill="none" stroke="#1B2233" stroke-width="2.4"/><circle cx="69" cy="55" r="6.5" fill="none" stroke="#1B2233" stroke-width="2.4"/><path d="M57.5 55h5" stroke="#1B2233" stroke-width="2.4"/><circle cx="51" cy="55" r="1.8" fill="#1B2233"/><circle cx="69" cy="55" r="1.8" fill="#1B2233"/><path d="M54 65c3 3 9 3 12 0" fill="none" stroke="#9A5B45" stroke-width="2.2" stroke-linecap="round"/>`,
+  fundamental:`<path d="M16 120c0-24 19-38 44-38s44 14 44 38z" fill="#1F8F62"/><path d="M48 82l12 20 12-20z" fill="#EAF7F0"/><path d="M46 83l14 22-8 15H38z" fill="#17734E"/><path d="M74 83 60 105l8 15h14z" fill="#17734E"/><rect x="52" y="66" width="16" height="18" rx="6" fill="#7A4A2F"/><circle cx="60" cy="27" r="9" fill="#1E1A1A"/><circle cx="60" cy="52" r="22" fill="#8D5A3B"/><path d="M38 52c-3-17 8-28 22-28s25 11 22 28c-4-10-12-16-22-16s-18 6-22 16z" fill="#1E1A1A"/><circle cx="51" cy="55" r="2.2" fill="#1B1414"/><circle cx="69" cy="55" r="2.2" fill="#1B1414"/><path d="M54 64c3 3 9 3 12 0" fill="none" stroke="#3E2216" stroke-width="2.2" stroke-linecap="round"/><circle cx="38.5" cy="61" r="2.2" fill="#F2C14E"/><circle cx="81.5" cy="61" r="2.2" fill="#F2C14E"/>`,
+  sentiment:`<path d="M16 120c0-24 19-38 44-38s44 14 44 38z" fill="#E07B2C"/><path d="M32 98c6-12 15-17 28-17s22 5 28 17" fill="none" stroke="#C4631A" stroke-width="6" stroke-linecap="round"/><path d="M55 88v14M65 88v14" stroke="#FBE3CC" stroke-width="2.4" stroke-linecap="round"/><rect x="52" y="66" width="16" height="18" rx="6" fill="#D9A27E"/><circle cx="60" cy="52" r="22" fill="#E8B48F"/><circle cx="44" cy="37" r="9" fill="#6B3E26"/><circle cx="56" cy="31" r="10" fill="#6B3E26"/><circle cx="70" cy="32" r="9" fill="#6B3E26"/><circle cx="79" cy="41" r="8" fill="#6B3E26"/><circle cx="40" cy="47" r="6" fill="#6B3E26"/><path d="M35 56c0-20 11-32 25-32s25 12 25 32" fill="none" stroke="#2A2F45" stroke-width="5"/><rect x="30" y="50" width="10" height="17" rx="4" fill="#2A2F45"/><rect x="80" y="50" width="10" height="17" rx="4" fill="#2A2F45"/><circle cx="52" cy="55" r="2.2" fill="#2A1A12"/><circle cx="68" cy="55" r="2.2" fill="#2A1A12"/><path d="M53 63c3 5 11 5 14 0z" fill="#8A3B2A"/>`,
+  economist:`<path d="M16 120c0-24 19-38 44-38s44 14 44 38z" fill="#6D4FC9"/><path d="M48 82l12 20 12-20z" fill="#F3F0FF"/><path d="M57 84h6l3 6-6 24-6-24z" fill="#F5B544"/><path d="M46 83l14 22-8 15H38z" fill="#5A3FB0"/><path d="M74 83 60 105l8 15h14z" fill="#5A3FB0"/><rect x="52" y="66" width="16" height="18" rx="6" fill="#B97A55"/><circle cx="60" cy="52" r="22" fill="#C98B63"/><path d="M38 48c0-15 10-24 22-24 13 0 23 8 22 22-3-6-8-9-14-10-9 3-20 3-30 12z" fill="#6A6A76"/><path d="M39 56c2 14 10 20 21 20s19-6 21-20c-4 6-10 8-21 8s-17-2-21-8z" fill="#6A6A76"/><circle cx="51" cy="54" r="2.2" fill="#2A1A12"/><circle cx="69" cy="54" r="2.2" fill="#2A1A12"/><path d="M55 64h10" stroke="#F1D3C0" stroke-width="2.2" stroke-linecap="round"/>`,
+  moderator:`<path d="M34 72V50c0-15 12-26 26-26s26 11 26 26v22z" fill="#B65C3A"/><path d="M16 120c0-24 19-38 44-38s44 14 44 38z" fill="#475569"/><path d="M48 82l12 18 12-18z" fill="#CBD5E1"/><path d="M50 84l10 18 10-18" fill="none" stroke="#FFD27A" stroke-width="2.5"/><rect x="55" y="100" width="10" height="13" rx="2" fill="#FFD27A"/><rect x="52" y="66" width="16" height="18" rx="6" fill="#E8C3A6"/><circle cx="60" cy="52" r="22" fill="#F3D2B8"/><path d="M38 49c4-11 12-16 22-16s18 5 22 16c-8-4-14-6-22-6s-14 2-22 6z" fill="#B65C3A"/><circle cx="51" cy="55" r="2.2" fill="#2A1A12"/><circle cx="69" cy="55" r="2.2" fill="#2A1A12"/><path d="M54 64c3 3 9 3 12 0" fill="none" stroke="#9A5B45" stroke-width="2.2" stroke-linecap="round"/>`,
+  single:`<path d="M16 120c0-24 19-38 44-38s44 14 44 38z" fill="#0F766E"/><path d="M48 82l12 18 12-18z" fill="#CCFBF1"/><rect x="52" y="66" width="16" height="18" rx="6" fill="#D6A57F"/><circle cx="60" cy="52" r="22" fill="#E3B590"/><path d="M38 50c-1-15 9-26 22-26s23 11 22 26c-3-7-9-11-14-11-5 4-18 5-30 11z" fill="#3B2A22"/><circle cx="51" cy="55" r="2.2" fill="#2A1A12"/><circle cx="69" cy="55" r="2.2" fill="#2A1A12"/><path d="M54 64c3 3 9 3 12 0" fill="none" stroke="#7C3F2C" stroke-width="2.2" stroke-linecap="round"/>`,
+};
+const MONITOR={
+  quant:`<path d="M4 50h72" stroke="#26304A" stroke-width="2"/><polyline points="6,44 18,38 28,42 40,26 52,30 64,14 74,18" fill="none" stroke="#5B9BFF" stroke-width="3.5" stroke-linejoin="round"/>`,
+  fundamental:`<rect x="8" y="34" width="10" height="20" rx="2" fill="#34C98A"/><rect x="23" y="24" width="10" height="30" rx="2" fill="#34C98A"/><rect x="38" y="28" width="10" height="26" rx="2" fill="#34C98A"/><rect x="53" y="12" width="10" height="42" rx="2" fill="#34C98A"/><rect x="68" y="18" width="6" height="36" rx="2" fill="#1F8F62"/>`,
+  sentiment:`<rect x="6" y="8" width="20" height="16" rx="3" fill="#F5A04A"/><rect x="32" y="9" width="42" height="5" rx="2.5" fill="#E8ECF5"/><rect x="32" y="18" width="30" height="5" rx="2.5" fill="#5B6687"/><rect x="6" y="32" width="68" height="5" rx="2.5" fill="#5B6687"/><rect x="6" y="42" width="56" height="5" rx="2.5" fill="#5B6687"/><rect x="6" y="52" width="40" height="5" rx="2.5" fill="#5B6687"/>`,
+  economist:`<path d="M4 50h72M6 8v44" stroke="#26304A" stroke-width="2"/><path d="M8 46C26 30 44 22 74 18" fill="none" stroke="#A88BFA" stroke-width="3.5" stroke-linecap="round"/><circle cx="24" cy="34" r="3.5" fill="#A88BFA"/><circle cx="48" cy="24" r="3.5" fill="#A88BFA"/><circle cx="72" cy="18" r="3.5" fill="#A88BFA"/>`,
+  single:`<rect x="8" y="10" width="64" height="8" rx="4" fill="#2DD4BF"/><rect x="8" y="24" width="44" height="6" rx="3" fill="#5B6687"/><rect x="8" y="36" width="56" height="6" rx="3" fill="#5B6687"/><rect x="8" y="48" width="32" height="6" rx="3" fill="#5B6687"/>`,
+};
+const avatarSvg = (key, label) => `<svg viewBox="0 0 120 120" role="img" aria-label="${esc(label)} avatar">${AVATAR[key]||AVATAR.single}</svg>`;
+
 function glyph(d){return d==="long"?'<span class="glyph" style="color:var(--long)">▲</span>':d==="short"?'<span class="glyph" style="color:var(--short)">▼</span>':'<span class="glyph" style="color:var(--neutral)">●</span>';}
-function shortLine(msg){
-  let s=(msg||"").trim();
-  const dot=s.indexOf(". "); if(dot>10&&dot<90) s=s.slice(0,dot);
-  const words=s.split(/\s+/); if(words.length>16) s=words.slice(0,16).join(" ")+"…";
-  return s.length>120? s.slice(0,120)+"…":s;
+function shortLine(msg, maxChars=220){
+  const s=(msg||"").trim();
+  return s.length>maxChars? s.slice(0,maxChars).replace(/\s+\S*$/,"")+"…" : s;
 }
 function evidenceChip(t,cur){
-  if(cur.kind==="reply"&&cur.quoted_claim) return "“"+cur.quoted_claim.slice(0,40)+"”";
+  if(cur.kind==="reply"&&cur.quoted_claim) return "“"+cur.quoted_claim.slice(0,40)+"…”";
   if(cur.kind==="opening"){
     const cv=(STATE.model.tickers[t]?.signals[cur.agent]?.cited_values||[])[0];
     if(cv) return `${cv.name}=${typeof cv.value==="number"?fmt(cv.value,3):cv.value}`;
@@ -303,48 +339,178 @@ function evidenceChip(t,cur){
   if(cur.q!=null) return `q=${fmt(cur.q,3)}`;
   return "";
 }
+function councilItems(t, model=STATE.model){
+  return (model?.tickers[t]?.transcript||[]).filter(x=>x.kind!=="consensus");
+}
+// The whole run (ignoring the scrubber), cached by event count, so the timeline can show what's ahead.
+function fullModel(){
+  if(STATE._fullRef!==STATE.events||STATE._fullLen!==STATE.events.length){
+    STATE._full=buildModel(STATE.events); STATE._fullRef=STATE.events; STATE._fullLen=STATE.events.length;
+  }
+  return STATE._full;
+}
 function currentMsgForTicker(t){
-  const items=(STATE.model.tickers[t]?.transcript||[]).filter(x=>x.kind!=="consensus");
+  const items=councilItems(t);
   const seq=currentMsgSeq(); let cur=null;
   for(const it of items){ if(it.seq<=seq) cur=it; else break; }
   return cur||items[0]||null;
 }
+// Which seat a transcript item belongs to: consensus bookkeeping is voiced by the moderator.
+function seatOf(agent){
+  if(STATIONS[agent]) return agent;
+  if(SINGLE_MODEL_AGENTS.includes(agent)) return "single";
+  return "moderator";
+}
+function fmtPct(q){ return (q>0?"+":q<0?"−":"±")+Math.abs(q*100).toFixed(1)+"%"; }
+
+function sceneDecor(t, roundNo, maxRound){
+  const bld=[38,62,46,80,54,70,42].map((h,i)=>`<div class="sc-bld${i%2?" alt":""}" style="height:${h}%"></div>`).join("");
+  const dots=[1,2,3].slice(0,Math.max(maxRound,1)).map(n=>`<span class="${n===roundNo?"on":n<roundNo?"done":""}"></span>`).join("");
+  const job=ROUND_JOBS[roundNo]||"Waiting for the floor";
+  return `
+  <div class="sc-wall" aria-hidden="true"></div><div class="sc-skirt" aria-hidden="true"></div>
+  <div class="sc-floor" aria-hidden="true"></div><div class="sc-rug" aria-hidden="true"></div>
+  <div class="sc-window" aria-hidden="true"><div class="sc-moon"></div><div class="sc-city">${bld}</div><div class="sc-mullion"></div></div>
+  <div class="sc-board" aria-hidden="true">
+    <div class="sc-board-t">${esc(t)}</div>
+    <div class="sc-board-s">${esc(job)}</div>
+    <div class="sc-board-dots">${dots}</div>
+  </div>
+  <div class="sc-lamp" style="left:21%" aria-hidden="true"><i class="cord"></i><i class="shade"></i><i class="glow"></i></div>
+  <div class="sc-lamp" style="left:79%" aria-hidden="true"><i class="cord"></i><i class="shade"></i><i class="glow"></i></div>
+  <div class="sc-plant" aria-hidden="true"><i></i><i></i><i></i><b></b></div>`;
+}
+
+function stationHtml(seatKey, agent, opts){
+  const st=STATIONS[seatKey], meta=AGENT_META[agent]||{name:agent,role:""};
+  const color=COLOR[agent]||"var(--moderator)";
+  const cls=["station"];
+  if(opts.speaking) cls.push("speaking");
+  if(opts.target) cls.push("target");
+  if(opts.tiebreak) cls.push("tiebreak");
+  const q=opts.q, hasQ=q!=null&&!isNaN(q);
+  const dir=hasQ?dirOf(q):null;
+  const dcol=dir==="long"?"var(--long)":dir==="short"?"var(--short)":"var(--neutral)";
+  const left=hasQ?Math.max(4,Math.min(96,50+(q/opts.scale)*46)):50;
+  const avKey=seatKey==="single"?"single":agent;
+  const monKey=seatKey==="single"?"single":agent;
+  const desk=st.standing?"":`
+    <div class="desk">
+      <div class="monitor"><div class="scr"><svg viewBox="0 0 80 60" aria-hidden="true">${MONITOR[monKey]||""}</svg></div><div class="stand"></div></div>
+      <div class="top"></div><div class="paper"></div><div class="mug"></div>
+    </div>`;
+  const plateBody = agent==="moderator"
+    ? `<div class="plate-note">Needs ${opts.threshold||3} of ${opts.voters||4} to accept</div>`
+    : `<div class="meter"><div class="track"><i class="mid"></i><i class="mk" style="left:${left}%;background:${hasQ?dcol:"#4A5578"}"></i></div>
+        <span class="val" style="color:${hasQ?dcol:"var(--mut)"}">${hasQ?(dir==="long"?"▲ ":dir==="short"?"▼ ":"● ")+fmtPct(q):"—"}</span></div>`;
+  return `<div class="${cls.join(" ")}" style="--c:${color};--ring:${opts.ringColor||"var(--moderator)"};left:${st.x}%;top:${st.y}%;width:${st.w}%;z-index:${opts.speaking?6:st.y>60?4:3}">
+    <div class="av${st.standing||seatKey==="single"?" wide":""}"><i class="halo" aria-hidden="true"></i>${avatarSvg(avKey, meta.name)}</div>
+    ${desk}
+    <div class="plate"><div class="hd"><i class="dot"></i><span class="nm">${esc(meta.name)}</span><span class="role">${esc(meta.role)}</span></div>${plateBody}</div>
+    ${opts.bubble?`<div class="speech${opts.tiebreak?" tb":""}" style="${st.bubble};--b:${opts.bubbleColor}">${opts.bubble}</div>`:""}
+  </div>`;
+}
+
 function renderCouncil(){
   const host=$("#council"), t=STATE.ticker, m=STATE.model;
   $("#council-ticker").textContent=t||"—";
-  if(!t||!m.tickers[t]){ host.innerHTML='<div class="muted" style="padding:24px">Pick a ticker.</div>'; $("#round-job").textContent=""; return; }
+  const chips=$("#roundchips"), dotsHost=$("#msgdots");
+  if(!t||!m.tickers[t]){
+    host.innerHTML='<div class="sc-empty">Load a run and pick a ticker to open the debate floor.</div>';
+    $("#round-job").textContent=""; if(chips)chips.innerHTML=""; if(dotsHost)dotsHost.innerHTML=""; return;
+  }
+  const tk=m.tickers[t], items=councilItems(t);
+  const fullTk=fullModel().tickers[t]||tk, allItems=councilItems(t, fullModel());
   const cur=currentMsgForTicker(t);
-  $("#round-job").textContent = cur? (ROUND_JOBS[cur.round]||"") : "";
-  let html='<div class="ctable"></div>';
-  // arrow from peer -> speaker (who influenced whom)
-  if(cur && cur.responding_to && SEATS[cur.responding_to] && SEATS[cur.agent]){
-    const f=SEATS[cur.responding_to], s=SEATS[cur.agent];
-    const col=cur.stance==="agree"?"var(--long)":cur.stance==="disagree"?"var(--short)":"var(--sentiment)";
-    html+=`<svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2">
-      <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="${col}"/></marker></defs>
-      <line x1="${f[0]}%" y1="${f[1]}%" x2="${s[0]}%" y2="${s[1]}%" stroke="${col}" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#ah)" opacity="0.85"/></svg>`;
+  const curSeq=cur?cur.seq:-Infinity;
+  const roundNo=cur?(cur.round||0):0;
+  const maxRound=Math.max(0,...Object.keys(fullTk.rounds).map(Number).filter(n=>n>0));
+  $("#round-job").textContent = cur? (ROUND_JOBS[roundNo]||"") : "";
+
+  // each agent's latest stated q up to the current message
+  const qs={};
+  let scale=0.02;
+  for(const it of allItems) if(it.q!=null&&!isNaN(it.q)) scale=Math.max(scale,Math.abs(Number(it.q)));
+  for(const it of items){
+    if(it.seq<=curSeq&&it.q!=null&&!isNaN(it.q)) qs[it.agent]=Number(it.q);
   }
-  // seats: the debate roles, plus a single-model seat only when that model is in this run
-  const present=new Set((m.tickers[t].transcript||[]).map(x=>x.agent));
-  const seats=Object.keys(SEATS).filter(ag=>!SINGLE_MODEL_AGENTS.includes(ag)||present.has(ag));
-  for(const ag of seats){
-    const p=SEATS[ag], speaking=cur&&cur.agent===ag, glow=cur&&cur.kind==="tiebreak"&&cur.agent===ag;
-    html+=`<div class="seat ${speaking?'speaking':''} ${glow?'glow':''}" style="left:${p[0]}%;top:${p[1]}%">
-      <div class="avatar" style="border-color:${COLOR[ag]};color:${COLOR[ag]}">${ICON[ag]}</div>
-      <div class="nm" style="color:${COLOR[ag]}">${ag}</div></div>`;
-  }
-  // current speech bubble
+  // votes visible so far feed the moderator's plate
+  let lastCons=null;
+  for(const e of STATE.events.slice(0,STATE.seek)) if(e.type==="consensus_result"&&e.ticker===t) lastCons=e.payload||{};
+
+  const present=new Set(items.map(x=>x.agent));
+  const singles=SINGLE_MODEL_AGENTS.filter(a=>present.has(a)||tk.signals?.[a]);
+  const seats = singles.length && !tk.hasDebate ? [["single",singles[0]]]
+    : [...AGENTS.map(a=>[a,a]),["moderator","moderator"]];
+
+  const speakerSeat=cur?seatOf(cur.agent):null;
+  const isTb=cur&&cur.kind==="tiebreak";
+  const stanceCol=cur&&cur.stance?STANCE_COLOR[cur.stance]:null;
+  let bubble="";
   if(cur){
-    const p=SEATS[cur.agent]||SEATS.moderator, above=p[1]>50, top=above? p[1]-30 : p[1]+15;
-    const bcol=cur.kind==="tiebreak"?"gold":(cur.stance==="agree"?"var(--long)":cur.stance==="disagree"?"var(--short)":cur.stance==="partial"?"var(--sentiment)":COLOR[cur.agent]);
+    const to=cur.responding_to&&AGENT_META[cur.responding_to]?cur.responding_to:null;
     const chip=evidenceChip(t,cur);
-    html+=`<div class="bubble2 ${cur.kind==='tiebreak'?'tb':''}" style="left:${p[0]}%;top:${top}%;border-left-color:${bcol}" title="${esc(cur.message)}">
-      ${cur.kind==="tiebreak"?'<div class="replyto" style="color:gold">⚖ breaks the tie</div>':''}
-      ${cur.responding_to?`<div class="replyto">↳ <b style="color:${COLOR[cur.responding_to]}">${esc(cur.responding_to)}</b>${cur.stance?` · ${esc(cur.stance)}`:''}</div>`:''}
-      <div class="line">${glyph(cur.direction)} ${esc(shortLine(cur.message))}</div>
-      ${chip?`<div class="echip">${esc(chip)}</div>`:''}</div>`;
+    bubble = (isTb?'<div class="to"><span class="tbh">Breaks the tie</span></div>':"")
+      + (to?`<div class="to"><span class="muted-ink">To</span><span style="color:${COLOR[to]};filter:brightness(.72)">${esc(AGENT_META[to].name)}</span>${cur.stance?`<span class="st">${esc(cur.stance)}</span>`:""}</div>`:"")
+      + `<div class="line">${glyph(cur.direction)} ${esc(shortLine(cur.message))}</div>`
+      + (chip?`<div class="ev">${esc(chip)}</div>`:"");
   }
-  host.innerHTML=html;
+  const bubbleColor = isTb?"gold":(stanceCol||COLOR[cur?.agent]||"var(--moderator)");
+
+  host.innerHTML = sceneDecor(t, roundNo, maxRound)
+    + `<div class="sc-chips"><span>Debate floor</span><span>${allItems.length?`Message ${Math.max(1,allItems.findIndex(x=>x.seq===curSeq)+1)} of ${allItems.length}`:"No debate for this ticker"}</span></div>`
+    + seats.map(([seat,agent])=>stationHtml(seat, agent, {
+        speaking: speakerSeat===seat,
+        target: !!cur && cur.responding_to===agent,
+        tiebreak: isTb && speakerSeat===seat,
+        ringColor: stanceCol||"var(--moderator)",
+        q: qs[agent], scale,
+        threshold: lastCons?.threshold, voters: lastCons?.eligible_voters,
+        bubble: speakerSeat===seat?bubble:"", bubbleColor,
+      })).join("");
+
+  // round chips + per-message dots for this ticker
+  if(chips){
+    chips.innerHTML="";
+    for(let n=1;n<=maxRound;n++){
+      const first=allItems.find(x=>x.round===n); if(!first) continue;
+      const b=el("button","rchip"+(n===roundNo?" on":n<roundNo?" done":""),`<b>R${n}</b> ${ROUND_SHORT[n]||""}`);
+      b.type="button"; b.onclick=()=>seekToSeq(first.seq); chips.appendChild(b);
+    }
+  }
+  if(dotsHost){
+    dotsHost.innerHTML="";
+    allItems.forEach((it,i)=>{
+      const seat=seatOf(it.agent), active=it.seq===curSeq, past=it.seq<curSeq;
+      const b=el("button","mdot"+(active?" on":"")+(past||active?" seen":"")+(seat==="moderator"?" mdot-mod":""));
+      b.type="button"; b.style.setProperty("--c", COLOR[it.agent]||"var(--moderator)");
+      b.setAttribute("aria-label",`Message ${i+1}: ${(AGENT_META[it.agent]?.name)||"Moderator"}${it.round?` · round ${it.round}`:""}`);
+      b.innerHTML="<i></i>"; b.onclick=()=>seekToSeq(it.seq); dotsHost.appendChild(b);
+    });
+  }
+}
+function seekToSeq(seq){
+  STATE.seek=Math.min(STATE.events.length, Math.floor(seq));
+  $("#seek").value=STATE.seek; rebuild();
+}
+function renderVoteCard(){
+  const host=$("#votecard"); if(!host) return;
+  const t=STATE.ticker;
+  if(!t||!STATE.model?.tickers[t]){ host.innerHTML='<span class="muted">No ticker selected.</span>'; return; }
+  let round=null; const votes={}; let cons=null;
+  for(const e of STATE.events.slice(0,STATE.seek)){
+    if(e.ticker!==t) continue;
+    if(e.type==="vote_cast"){ if(e.round!==round){ round=e.round; for(const k in votes) delete votes[k]; cons=null; } votes[e.agent]=e.payload||{}; }
+    if(e.type==="consensus_result"&&e.round===round) cons=e.payload||{};
+  }
+  if(round==null){ host.innerHTML='<span class="muted">The first vote happens at the end of round 1.</span>'; return; }
+  const rows=AGENTS.filter(a=>votes[a]).map(a=>{
+    const v=votes[a].vote||"—";
+    return `<div class="vrow"><span style="color:${COLOR[a]}">${esc(AGENT_META[a].name)}</span><span class="vpill ${esc(v)}">${esc(v)}</span></div>`;
+  }).join("");
+  const sum = cons ? `Round ${round}: ${cons.accepts??"?"} of ${cons.eligible_voters??4} accept · needs ${cons.threshold??3}. ${cons.resolved?"Consensus reached.":"No consensus."}`
+                   : `Round ${round}: votes coming in…`;
+  host.innerHTML=`<div class="vgrid">${rows}</div><div class="vsum">${esc(sum)}</div>`;
 }
 
 const STANCE_CLS = {agree:"agree", disagree:"disagree", partial:"partial"};
@@ -394,7 +560,7 @@ function currentMsgSeq(){
 }
 function msgSeqs(){
   const fromTranscript=[];
-  const model = STATE.model || buildModel(STATE.events.slice(0, STATE.seek || STATE.events.length));
+  const model = fullModel();  // the whole run, so "next" can see messages ahead of the scrubber
   for(const tk of Object.values(model.tickers||{})){
     for(const it of (tk.transcript||[])){ if(it.kind!=="consensus" && it.seq!=null) fromTranscript.push(Math.floor(it.seq)); }
   }
